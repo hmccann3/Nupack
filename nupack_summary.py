@@ -7,16 +7,13 @@ import re
 my_model = Model(material="rna", celsius=28)
 ### Input file containing anchors and compactors
 orig_df = pd.read_csv("compactor_summary.tsv", sep="\t")
-orig_df.drop("lev_struct_dist", axis=1, inplace=True)
-orig_df.drop("nupack_structure", axis=1, inplace=True)
-orig_df.drop("mfe", axis=1, inplace=True)
-orig_df.drop("mfe_mean", axis=1, inplace=True)
-orig_df.drop("lev_dist_struct_dist_ratio", axis=1, inplace=True)
 struct_lev_dict = {}
-lev_dict = {}
 j = 0
+### Only include compactors above average compactor length
 compactor_length = int(orig_df["compactor_valid"].apply(len).mean())
-for anchor in orig_df.anchor.unique()[:100]:
+orig_df = orig_df[orig_df["compactor_valid"].str.len() >= compactor_length]
+###Iterate through anchors
+for anchor in orig_df.anchor.unique():
     j += 1
     ### Only run nupack when there are more than five compactors for an anchor
     if len(orig_df[orig_df["anchor"] == anchor]) > 5:
@@ -30,21 +27,19 @@ for anchor in orig_df.anchor.unique()[:100]:
         a_dict = {}
         swap_dict = {"A": "U", "T": "A", "G": "C", "C": "G"}
         for compactor in df["compactor_valid"]:
-            ### Only use compactors above average compactor length
-            if len(compactor) >= compactor_length:
-                ### Standardize compactor length and convert from cDNA to RNA
-                short_compactor = compactor[:compactor_length]
-                rna_compactor = ""
-                for char in short_compactor:
-                    if char in swap_dict:
-                        rna_compactor += swap_dict[char]
-                    else:
-                        print("Skipping base N")
-                ###Calculate compactor weights based on valid_local_proportion from compactor_summary file 
-                valid_proportion = df[df["compactor_valid"] == compactor]["valid_local_proportion"].astype("float").iloc[0]
-                compactor_weighting = valid_proportion/(df["valid_local_proportion"].sum())
-                compactor_dict["(" + alphabet[i] + ")"] = [rna_compactor, compactor, compactor_weighting]
-                a_dict[Strand(rna_compactor, name=alphabet[i])] = 5e-6
+            ### Standardize compactor length and convert from cDNA to RNA
+            short_compactor = compactor[:compactor_length]
+            rna_compactor = ""
+            for char in short_compactor:
+                if char in swap_dict:
+                    rna_compactor += swap_dict[char]
+                else:
+                    print("Skipping base N")
+            ###Calculate compactor weights based on valid_local_proportion from compactor_summary file 
+            valid_proportion = df[df["compactor_valid"] == compactor]["valid_local_proportion"].astype("float").iloc[0]
+            compactor_weighting = valid_proportion/(df["valid_local_proportion"].sum())
+            compactor_dict["(" + alphabet[i] + ")"] = [rna_compactor, compactor, compactor_weighting]
+            a_dict[Strand(rna_compactor, name=alphabet[i])] = 5e-6
             i += 1
         ###Run nupack on all compactors for this anchor 
         t1 = Tube(strands=a_dict, complexes=SetSpec(max_size=1), name="Tube t1")
@@ -110,20 +105,21 @@ for anchor in orig_df.anchor.unique()[:100]:
                         subopt_struct_lev_dist = entry[1]
                         seq_lev_dist = entry[2]
                         covarying_pairs = entry[3]
+                        known_comparisons.pop(val2[3], val[3])
                     else:
                         struct2 = val2[0]
                         second_best_struct2 = val2[4]
                         short_compactor2 = val2[2]
                         ###Get lowest levenshtein distance between top two structures of two compactors
+                        struct_lev_dist = lev.distance(struct, struct2)
                         subopt_struct_lev_dist = min(
                             [
-                                lev.distance(struct, struct2),
+                                struct_lev_dist,
                                 lev.distance(struct, second_best_struct2),
                                 lev.distance(second_best_struct, struct2),
                                 lev.distance(second_best_struct, second_best_struct2),
                             ]
                         )
-                        struct_lev_dist = lev.distance(struct, struct2)
                         seq_lev_dist = lev.distance(short_compactor, short_compactor2)
                         mismatches = [i for i in range(len(short_compactor)) if short_compactor[i] != short_compactor2[i]]
                         ###Count number of covarying pairs between two compactors
@@ -179,7 +175,7 @@ final_df.dropna(subset=["avg_pairwise_lev_struct_dist"], inplace=True)
 final_df["lev_dist_struct_dist_ratio"] = (
     final_df["avg_pairwise_lev_struct_dist"] / final_df["avg_pairwise_lev_dist"]
 )
-final_df["avg_pairwise_best_subopt_lev_dist_struct_dist_ratio"] = (
+final_df["best_subopt_lev_dist_struct_dist_ratio"] = (
     final_df["avg_pairwise_best_subopt_lev_struct_dist"] / final_df["avg_pairwise_lev_dist"]
 )
 final_df["weighted_mfe_mean"] = (final_df["weighted_mfe"].groupby(final_df["anchor"]).transform("sum"))
